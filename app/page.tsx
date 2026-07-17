@@ -96,6 +96,12 @@ export default function Home() {
   const today = localDateKey(new Date());
   const [loaded, setLoaded] = useState(false);
   const [databaseUserId, setDatabaseUserId] = useState<string | null>(null);
+  const [databaseReady, setDatabaseReady] = useState(false);
+  const [authMode, setAuthMode] = useState<"login" | "register">("login");
+  const [authEmail, setAuthEmail] = useState("");
+  const [authPassword, setAuthPassword] = useState("");
+  const [authMessage, setAuthMessage] = useState("");
+  const [authBusy, setAuthBusy] = useState(false);
   const [data, setData] = useState<AppData>(() => initialData());
   const [selectedDate, setSelectedDate] = useState(today);
   const [cursor, setCursor] = useState(() => new Date());
@@ -123,9 +129,8 @@ export default function Home() {
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const saved = localStorage.getItem("grind-v2");
-      let localData: AppData | null = null;
       if (saved) {
-        try { localData = JSON.parse(saved) as AppData; setData(localData); } catch { /* mantém a base inicial */ }
+        try { setData(JSON.parse(saved) as AppData); } catch { /* mantém a base inicial */ }
       } else {
         const legacy = localStorage.getItem("discipline-data");
         if (legacy) {
@@ -139,7 +144,6 @@ export default function Home() {
             }
             const firstHabits = Object.values(old).find((record) => record.habits?.length)?.habits;
             if (firstHabits) migrated.habits = firstHabits.map(({ id, label }) => ({ id, label }));
-            localData = migrated;
             setData(migrated);
           } catch { /* ignora dados antigos inválidos */ }
         }
@@ -153,24 +157,13 @@ export default function Home() {
       }
 
       void (async () => {
-        let { data: { user } } = await supabase.auth.getUser();
-        if (!user) {
-          const { data } = await supabase.auth.signInAnonymously();
-          user = data.user;
-        }
-
+        const { data: { user } } = await supabase.auth.getUser();
         if (!user) {
           setLoaded(true);
           return;
         }
 
         setDatabaseUserId(user.id);
-        const { data: remote } = await supabase.from("grind_states").select("data").eq("user_id", user.id).maybeSingle();
-        if (remote?.data && Object.keys(remote.data as object).length) {
-          setData(remote.data as AppData);
-        } else if (localData) {
-          await supabase.from("grind_states").upsert({ user_id: user.id, data: localData, updated_at: new Date().toISOString() });
-        }
         setLoaded(true);
       })();
     });
@@ -180,14 +173,23 @@ export default function Home() {
 
   useEffect(() => { if (loaded) localStorage.setItem("grind-v2", JSON.stringify(data)); }, [data, loaded]);
   useEffect(() => {
-    if (!loaded || !databaseUserId) return;
+    if (!loaded || !databaseUserId || databaseReady) return;
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
-    const timer = window.setTimeout(() => {
-      void supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() });
-    }, 700);
+    void (async () => {
+      const { data: remote } = await supabase.from("grind_states").select("data").eq("user_id", databaseUserId).maybeSingle();
+      if (remote?.data && Object.keys(remote.data as object).length) setData(remote.data as AppData);
+      else await supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() });
+      setDatabaseReady(true);
+    })();
+  }, [data, databaseReady, databaseUserId, loaded]);
+  useEffect(() => {
+    if (!loaded || !databaseUserId || !databaseReady) return;
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    const timer = window.setTimeout(() => { void supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() }); }, 700);
     return () => window.clearTimeout(timer);
-  }, [data, databaseUserId, loaded]);
+  }, [data, databaseReady, databaseUserId, loaded]);
   useEffect(() => { if (loaded) localStorage.setItem("grind-accent", accent); }, [accent, loaded]);
 
   const groups = data.tasks[selectedDate] ?? defaultGroups();
@@ -304,8 +306,40 @@ export default function Home() {
     event.preventDefault(); const targets = materialSelection.length ? materialSelection : filteredAccounts.map((item) => item.id);
     setData((current) => ({ ...current, accounts: current.accounts.map((item) => targets.includes(item.id) ? { ...item, materialDays, materialScope, materialUpdatedAt: new Date().toISOString() } : item) }));
   }
+  async function authenticate(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const supabase = getSupabaseBrowserClient();
+    if (!supabase) return;
+    setAuthBusy(true); setAuthMessage("");
+    const result = authMode === "login"
+      ? await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword })
+      : await supabase.auth.signUp({ email: authEmail.trim(), password: authPassword });
+    setAuthBusy(false);
+    if (result.error) { setAuthMessage(result.error.message); return; }
+    if (!result.data.user) { setAuthMessage("Não foi possível criar a conta. Tente novamente."); return; }
+    if (!result.data.session) { setAuthMessage("Conta criada. Confirme seu e-mail e depois entre com sua senha."); return; }
+    setDatabaseReady(false); setDatabaseUserId(result.data.user.id); setAuthPassword("");
+  }
+  async function signOut() {
+    const supabase = getSupabaseBrowserClient();
+    if (supabase) await supabase.auth.signOut();
+    setDatabaseReady(false); setDatabaseUserId(null); setAuthMode("login"); setAuthPassword("");
+  }
 
   if (!loaded) return <main className="loading-state">Carregando…</main>;
+  const supabaseConfigured = Boolean(getSupabaseBrowserClient());
+  if (supabaseConfigured && !databaseUserId) return <main className="auth-shell">
+    <form className="auth-card" onSubmit={authenticate}>
+      <span className="auth-mark" aria-hidden="true" />
+      <h1>{authMode === "login" ? "Entrar" : "Criar conta"}</h1>
+      <p>{authMode === "login" ? "Entre para acessar seus dados salvos." : "Crie sua conta para manter seus dados protegidos."}</p>
+      <label>Usuário (e-mail)<input type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required placeholder="voce@exemplo.com" /></label>
+      <label>Senha<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} minLength={6} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Mínimo de 6 caracteres" /></label>
+      {authMessage ? <p className="auth-message">{authMessage}</p> : null}
+      <button className="primary auth-submit" disabled={authBusy}>{authBusy ? "Aguarde…" : authMode === "login" ? "Entrar" : "Criar conta"}</button>
+      <button type="button" className="auth-switch" onClick={() => { setAuthMode((mode) => mode === "login" ? "register" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "Ainda não tenho conta" : "Já tenho uma conta"}</button>
+    </form>
+  </main>;
   const themeStyle = { "--accent": accent, "--accent-ink": accentInk(accent) } as CSSProperties;
 
   return <main className="app-shell" style={themeStyle}>
@@ -314,7 +348,7 @@ export default function Home() {
         <button aria-label="Hoje" className={mainView === "today" ? "active" : ""} onClick={() => setMainView("today")}><Icon name="today"/><span>Hoje</span></button>
         <button aria-label="Operação" className={mainView === "operation" ? "active" : ""} onClick={() => setMainView("operation")}><Icon name="operation"/><span>Operação</span></button>
       </nav>
-      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => setAccent(event.currentTarget.value)} aria-label="Cor do aplicativo" /></label></div>
+      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => setAccent(event.currentTarget.value)} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
     </header>
 
     {mainView === "today" ? <div className="today-view">

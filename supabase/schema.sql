@@ -1,5 +1,5 @@
 -- Execute este arquivo uma vez no SQL Editor do seu projeto Supabase.
--- Em Authentication > Providers, habilite "Anonymous Sign-Ins".
+-- Em Authentication > Providers, mantenha o provedor Email habilitado.
 
 create table if not exists public.grind_states (
   user_id uuid primary key references auth.users(id) on delete cascade,

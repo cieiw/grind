@@ -23,7 +23,8 @@ test("keeps the Grind shell, installable assets, and database sync connected", a
 
   assert.match(page, /localStorage\.getItem\("grind-v2"\)/);
   assert.match(page, /grind_states/);
-  assert.match(page, /signInAnonymously/);
+  assert.match(page, /signInWithPassword/);
+  assert.match(page, /signUp/);
   assert.match(page, /function rolloverPendingTasks\(\)/);
   assert.match(page, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
   assert.match(layout, /title: "Grind"/);
