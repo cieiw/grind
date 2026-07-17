@@ -97,7 +97,6 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [databaseUserId, setDatabaseUserId] = useState<string | null>(null);
   const [databaseReady, setDatabaseReady] = useState(false);
-  const [authMode, setAuthMode] = useState<"login" | "register">("login");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
@@ -311,33 +310,30 @@ export default function Home() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     setAuthBusy(true); setAuthMessage("");
-    const result = authMode === "login"
-      ? await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword })
-      : await supabase.auth.signUp({ email: authEmail.trim(), password: authPassword });
+    const result = await supabase.auth.signInWithPassword({ email: authEmail.trim(), password: authPassword });
     setAuthBusy(false);
     if (result.error) { setAuthMessage(result.error.message); return; }
-    if (!result.data.user) { setAuthMessage("Não foi possível criar a conta. Tente novamente."); return; }
-    if (!result.data.session) { setAuthMessage("Conta criada. Confirme seu e-mail e depois entre com sua senha."); return; }
+    if (!result.data.user || !result.data.session) { setAuthMessage("Não foi possível entrar. Confira seu e-mail e senha."); return; }
     setDatabaseReady(false); setDatabaseUserId(result.data.user.id); setAuthPassword("");
   }
   async function signOut() {
     const supabase = getSupabaseBrowserClient();
     if (supabase) await supabase.auth.signOut();
-    setDatabaseReady(false); setDatabaseUserId(null); setAuthMode("login"); setAuthPassword("");
+    setDatabaseReady(false); setDatabaseUserId(null); setAuthPassword("");
   }
 
   if (!loaded) return <main className="loading-state">Carregando…</main>;
   const supabaseConfigured = Boolean(getSupabaseBrowserClient());
+  if (!supabaseConfigured) return <main className="auth-shell"><section className="auth-card"><span className="auth-mark" aria-hidden="true" /><h1>Conexão pendente</h1><p>Configure as variáveis públicas do Supabase para liberar o login e seus dados salvos.</p><code>NEXT_PUBLIC_SUPABASE_URL<br/>NEXT_PUBLIC_SUPABASE_PUBLISHABLE_KEY</code></section></main>;
   if (supabaseConfigured && !databaseUserId) return <main className="auth-shell">
     <form className="auth-card" onSubmit={authenticate}>
       <span className="auth-mark" aria-hidden="true" />
-      <h1>{authMode === "login" ? "Entrar" : "Criar conta"}</h1>
-      <p>{authMode === "login" ? "Entre para acessar seus dados salvos." : "Crie sua conta para manter seus dados protegidos."}</p>
+      <h1>Entrar</h1>
+      <p>Entre para acessar seus dados salvos.</p>
       <label>Usuário (e-mail)<input type="email" autoComplete="email" value={authEmail} onChange={(event) => setAuthEmail(event.target.value)} required placeholder="voce@exemplo.com" /></label>
-      <label>Senha<input type="password" autoComplete={authMode === "login" ? "current-password" : "new-password"} minLength={6} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Mínimo de 6 caracteres" /></label>
+      <label>Senha<input type="password" autoComplete="current-password" minLength={6} value={authPassword} onChange={(event) => setAuthPassword(event.target.value)} required placeholder="Sua senha" /></label>
       {authMessage ? <p className="auth-message">{authMessage}</p> : null}
-      <button className="primary auth-submit" disabled={authBusy}>{authBusy ? "Aguarde…" : authMode === "login" ? "Entrar" : "Criar conta"}</button>
-      <button type="button" className="auth-switch" onClick={() => { setAuthMode((mode) => mode === "login" ? "register" : "login"); setAuthMessage(""); }}>{authMode === "login" ? "Ainda não tenho conta" : "Já tenho uma conta"}</button>
+      <button className="primary auth-submit" disabled={authBusy}>{authBusy ? "Aguarde…" : "Entrar"}</button>
     </form>
   </main>;
   const themeStyle = { "--accent": accent, "--accent-ink": accentInk(accent) } as CSSProperties;
