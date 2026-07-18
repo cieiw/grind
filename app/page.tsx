@@ -11,7 +11,7 @@ type PeriodType = "week" | "month";
 type Snapshot = { id: string; periodType: PeriodType; periodNumber: number; views: number; posts: number; recordedAt: string };
 type RoutineTemplate = { id: string; periodType: PeriodType; periodNumber: number; dayNumber: number; title: string; description: string; trackPosts: boolean };
 type Account = {
-  id: string; name: string; phone: string; handle: string; instagramUrl: string; batch: number; createdAt: string;
+  id: string; name: string; instagramUrl: string; batch: number | null; createdAt: string;
   views: number; posts: number; materialDays: number; materialScope: number; materialUpdatedAt: string;
   notes: string; completedRoutine: string[]; snapshots: Snapshot[];
 };
@@ -58,14 +58,28 @@ function remainingLabel(expiresAt: string) {
   return `${days}d restantes`;
 }
 
+function addMonthsClamped(date: Date, months: number) {
+  const targetMonth = date.getMonth() + months;
+  const lastDay = new Date(date.getFullYear(), targetMonth + 1, 0).getDate();
+  return new Date(date.getFullYear(), targetMonth, Math.min(date.getDate(), lastDay));
+}
+
 function timeline(account: Account) {
   if (!account.createdAt) return { absoluteDay: 1, periodType: "week" as PeriodType, periodNumber: 1, dayNumber: 1 };
   const start = parseDate(account.createdAt);
   const now = parseDate(localDateKey(new Date()));
   const absoluteDay = Math.max(1, Math.floor((now.getTime() - start.getTime()) / 86400000) + 1);
-  if (absoluteDay <= 28) return { absoluteDay, periodType: "week" as PeriodType, periodNumber: Math.ceil(absoluteDay / 7), dayNumber: ((absoluteDay - 1) % 7) + 1 };
-  const month = Math.max(2, Math.floor((now.getFullYear() - start.getFullYear()) * 12 + now.getMonth() - start.getMonth()) + 1);
-  return { absoluteDay, periodType: "month" as PeriodType, periodNumber: month, dayNumber: now.getDate() };
+  const firstMonthEnd = addMonthsClamped(start, 1);
+  if (now < firstMonthEnd) return { absoluteDay, periodType: "week" as PeriodType, periodNumber: Math.ceil(absoluteDay / 7), dayNumber: ((absoluteDay - 1) % 7) + 1 };
+  let periodNumber = 2;
+  let periodStart = firstMonthEnd;
+  let nextPeriodStart = addMonthsClamped(firstMonthEnd, 1);
+  while (now >= nextPeriodStart) {
+    periodNumber += 1;
+    periodStart = nextPeriodStart;
+    nextPeriodStart = addMonthsClamped(firstMonthEnd, periodNumber - 1);
+  }
+  return { absoluteDay, periodType: "month" as PeriodType, periodNumber, dayNumber: Math.max(1, Math.floor((now.getTime() - periodStart.getTime()) / 86400000) + 1) };
 }
 
 function materialStatus(account: Account) {
@@ -80,7 +94,7 @@ function accentInk(hex: string) {
   return (r * 299 + g * 587 + b * 114) / 1000 > 145 ? "#101312" : "#ffffff";
 }
 
-function Icon({ name }: { name: "today" | "operation" | "overview" | "profile" | "material" | "routine" }) {
+function Icon({ name }: { name: "today" | "operation" | "overview" | "profile" | "material" | "routine" | "logout" }) {
   const paths = {
     today: <><path d="M4 6h16v14H4z"/><path d="M8 3v6M16 3v6M4 11h16"/></>,
     operation: <><path d="M4 19V9l8-5 8 5v10"/><path d="M8 19v-6h8v6"/></>,
@@ -88,6 +102,7 @@ function Icon({ name }: { name: "today" | "operation" | "overview" | "profile" |
     profile: <><circle cx="12" cy="8" r="4"/><path d="M4 21c0-5 3-8 8-8s8 3 8 8"/></>,
     material: <><path d="M4 7l8-4 8 4-8 4z"/><path d="M4 7v10l8 4 8-4V7M12 11v10"/></>,
     routine: <><path d="M9 5h11M9 12h11M9 19h11"/><path d="M3 5l1.5 1.5L7 3M3 12l1.5 1.5L7 10M3 19l1.5 1.5L7 17"/></>,
+    logout: <><path d="M10 5H6a2 2 0 0 0-2 2v10a2 2 0 0 0 2 2h4"/><path d="M14 8l4 4-4 4M18 12H9"/></>,
   };
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
@@ -119,11 +134,11 @@ export default function Home() {
   const [goalSettingsOpen, setGoalSettingsOpen] = useState(false);
   const [accountName, setAccountName] = useState("");
   const [selectedAccountId, setSelectedAccountId] = useState("");
-  const [batchFilter, setBatchFilter] = useState<number | "all">("all");
+  const [batchFilter, setBatchFilter] = useState<number | "all" | "unbatched">("all");
   const [sortMode, setSortMode] = useState<"manual" | "old" | "new">("manual");
   const [cardSize, setCardSize] = useState(210);
   const [materialSelection, setMaterialSelection] = useState<string[]>([]);
-  const [materialDays, setMaterialDays] = useState(7);
+  const [materialDays, setMaterialDays] = useState(0);
   const [materialScope, setMaterialScope] = useState(30);
   const [routinePeriodType, setRoutinePeriodType] = useState<PeriodType>("week");
   const [routinePeriodNumber, setRoutinePeriodNumber] = useState(1);
@@ -239,12 +254,12 @@ export default function Home() {
   const goalRevenue = useMemo(() => Object.entries(data.revenue).filter(([date]) => date >= goalStart && date <= goalEnd).reduce((sum, [, value]) => sum + moneyValue(value), 0), [data.revenue, goalStart, goalEnd]);
   const goalProgress = Math.min(100, (goalRevenue / Math.max(1, goalAmount)) * 100);
   const filteredAccounts = useMemo(() => {
-    const items = data.accounts.filter((account) => batchFilter === "all" || account.batch === batchFilter);
+    const items = data.accounts.filter((account) => batchFilter === "all" || (batchFilter === "unbatched" ? account.batch == null : account.batch === batchFilter));
     if (sortMode === "old") return [...items].sort((a, b) => a.createdAt.localeCompare(b.createdAt));
     if (sortMode === "new") return [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
     return items;
   }, [data.accounts, batchFilter, sortMode]);
-  const batchNumbers = [...new Set(data.accounts.map((item) => item.batch))].sort((a, b) => a - b);
+  const batchNumbers = [...new Set(data.accounts.map((item) => item.batch).filter((batch): batch is number => batch != null))].sort((a, b) => a - b);
 
   function updateGroups(transform: (current: Group[]) => Group[]) {
     setData((current) => ({ ...current, tasks: { ...current.tasks, [selectedDate]: transform(current.tasks[selectedDate] ?? defaultGroups()) } }));
@@ -309,7 +324,7 @@ export default function Home() {
   }
   function createAccount(event: FormEvent) {
     event.preventDefault(); if (!accountName.trim()) return;
-    const account: Account = { id: uid(), name: accountName.trim(), phone: "", handle: "", instagramUrl: "", batch: 1, createdAt: today, views: 0, posts: 0, materialDays: 7, materialScope: 30, materialUpdatedAt: new Date().toISOString(), notes: "", completedRoutine: [], snapshots: [] };
+    const account: Account = { id: uid(), name: accountName.trim(), instagramUrl: "", batch: null, createdAt: today, views: 0, posts: 0, materialDays: 0, materialScope: 30, materialUpdatedAt: new Date().toISOString(), notes: "", completedRoutine: [], snapshots: [] };
     setData((current) => ({ ...current, accounts: [...current.accounts, account] })); setSelectedAccountId(account.id); setAccountName("");
   }
   function moveAccount(id: string, direction: -1 | 1) {
@@ -322,12 +337,13 @@ export default function Home() {
   function saveSnapshot(event: FormEvent<HTMLFormElement>) {
     event.preventDefault(); if (!selectedAccount) return;
     const form = new FormData(event.currentTarget); const time = timeline(selectedAccount);
-    const views = Number(form.get("views") || 0); const posts = Number(form.get("posts") || 0);
+    const views = Number(form.get("views") || 0); const posts = selectedAccount.posts;
     const snapshot: Snapshot = { id: uid(), periodType: time.periodType, periodNumber: time.periodNumber, views, posts, recordedAt: new Date().toISOString() };
     updateAccount(selectedAccount.id, { views, posts, snapshots: [...selectedAccount.snapshots.filter((item) => !(item.periodType === time.periodType && item.periodNumber === time.periodNumber)), snapshot] });
   }
   function applyMaterial(event: FormEvent) {
-    event.preventDefault(); const targets = materialSelection.length ? materialSelection : filteredAccounts.map((item) => item.id);
+    event.preventDefault(); const targets = materialSelection;
+    if (!targets.length) return;
     setData((current) => ({ ...current, accounts: current.accounts.map((item) => targets.includes(item.id) ? { ...item, materialDays, materialScope, materialUpdatedAt: new Date().toISOString() } : item) }));
   }
   async function authenticate(event: FormEvent<HTMLFormElement>) {
@@ -369,7 +385,7 @@ export default function Home() {
         <button aria-label="Hoje" className={mainView === "today" ? "active" : ""} onClick={() => setMainView("today")}><Icon name="today"/><span>Hoje</span></button>
         <button aria-label="Operação" className={mainView === "operation" ? "active" : ""} onClick={() => setMainView("operation")}><Icon name="operation"/><span>Operação</span></button>
       </nav>
-      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><span className={`database-status ${databaseStatus}`} title={databaseError || "Dados salvos no Supabase"}>{databaseStatus === "saved" ? "salvo" : databaseStatus === "saving" ? "salvando…" : databaseStatus === "error" ? "erro ao salvar" : "conectando…"}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => { const nextAccent = event.currentTarget.value; setAccent(nextAccent); setData((current) => ({ ...current, accent: nextAccent })); }} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
+      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span>{databaseStatus === "error" ? <span className="database-status error" title={databaseError}>erro ao salvar</span> : null}<label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => { const nextAccent = event.currentTarget.value; setAccent(nextAccent); setData((current) => ({ ...current, accent: nextAccent })); }} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut} aria-label="Sair" title="Sair"><Icon name="logout"/></button> : null}</div>
     </header>
 
     {mainView === "today" ? <div className="today-view">
@@ -425,7 +441,7 @@ export default function Home() {
       <div className="operation-layout">
         <aside className="account-rail">
           <form className="account-create" onSubmit={createAccount}><input value={accountName} onChange={(event) => setAccountName(event.target.value)} placeholder="Modelo"/><button className="primary">+</button></form>
-          <select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" ? "all" : Number(event.target.value))}><option value="all">Todos os lotes</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select>
+          <select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" || event.target.value === "unbatched" ? event.target.value : Number(event.target.value))}><option value="all">Todos os lotes</option><option value="unbatched">Sem lote</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select>
           <div className="account-list">{filteredAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; return <button className={selectedAccount?.id === account.id ? "active" : ""} key={account.id} onClick={() => setSelectedAccountId(account.id)}><strong>{account.name}</strong><span>{time.periodType === "week" ? `Semana ${time.periodNumber}` : `Mês ${time.periodNumber}`} · dia {time.dayNumber}</span><i><b style={{ width: `${routine.length ? done / routine.length * 100 : 0}%` }}/></i></button>; })}{!filteredAccounts.length ? <p className="empty-state">Adicione o primeiro perfil.</p> : null}</div>
         </aside>
 
@@ -441,16 +457,16 @@ export default function Home() {
 
           {operationView === "profile" ? selectedAccount ? <div className="profile-view">
             <div className="profile-head"><input className="profile-name" value={selectedAccount.name} onChange={(event) => updateAccount(selectedAccount.id,{name:event.target.value})}/><button className="danger-text" onClick={() => setData((current) => ({ ...current, accounts: current.accounts.filter((item) => item.id !== selectedAccount.id) }))}>excluir</button></div>
-            <div className="profile-fields"><label>Celular<input value={selectedAccount.phone} onChange={(event) => updateAccount(selectedAccount.id,{phone:event.target.value})}/></label><label>@ do perfil<input value={selectedAccount.handle} onChange={(event) => updateAccount(selectedAccount.id,{handle:event.target.value})}/></label><label>Instagram<input type="url" value={selectedAccount.instagramUrl} onChange={(event) => updateAccount(selectedAccount.id,{instagramUrl:event.target.value})}/></label><label>Data de criação<input type="date" value={selectedAccount.createdAt} onChange={(event) => updateAccount(selectedAccount.id,{createdAt:event.target.value})}/></label><label>Lote<input type="number" min="1" value={selectedAccount.batch} onChange={(event) => updateAccount(selectedAccount.id,{batch:Math.max(1,Number(event.target.value))})}/></label><label>Dia de operação<input readOnly value={timeline(selectedAccount).absoluteDay}/></label></div>
-            <form className="snapshot-form" onSubmit={saveSnapshot}><label>Views<input name="views" type="number" min="0" defaultValue={selectedAccount.views}/></label><label>Reels<input name="posts" type="number" min="0" defaultValue={selectedAccount.posts}/></label><button className="primary">Salvar período</button></form>
+            <div className="profile-fields"><label>Instagram<input type="url" value={selectedAccount.instagramUrl} onChange={(event) => updateAccount(selectedAccount.id,{instagramUrl:event.target.value})}/></label><label>Data de criação<input type="date" value={selectedAccount.createdAt} onChange={(event) => updateAccount(selectedAccount.id,{createdAt:event.target.value})}/></label><label>Lote<input type="number" min="1" value={selectedAccount.batch ?? ""} onChange={(event) => updateAccount(selectedAccount.id,{batch:event.target.value === "" ? null : Math.max(1,Number(event.target.value))})} placeholder="Sem lote"/></label><label>Período atual<input readOnly value={timeline(selectedAccount).periodType === "week" ? `Semana ${timeline(selectedAccount).periodNumber}` : `Mês ${timeline(selectedAccount).periodNumber}`}/></label><label>Dia de operação<input readOnly value={timeline(selectedAccount).absoluteDay}/></label></div>
+            <form className="snapshot-form" onSubmit={saveSnapshot}><label>Views<input name="views" type="number" min="0" defaultValue={selectedAccount.views}/></label><div className="readonly-metric"><span>{selectedAccount.posts}</span><small>reels pela rotina</small></div><button className="primary">Salvar período</button></form>
             <textarea className="profile-notes" value={selectedAccount.notes} onChange={(event) => updateAccount(selectedAccount.id,{notes:event.target.value})} placeholder="Notas de progresso"/>
             <div className="insights"><div><strong>{compact.format(selectedAccount.views)}</strong><span>views</span></div><div><strong>{selectedAccount.posts}</strong><span>reels</span></div><div><strong>{selectedAccount.snapshots.length}</strong><span>fechamentos</span></div><div><strong>{timeline(selectedAccount).absoluteDay}</strong><span>dias</span></div></div>
           </div> : <p className="empty-state large">Adicione ou selecione um perfil.</p> : null}
 
           {operationView === "material" ? <div className="material-view">
-            <div className="material-toolbar"><select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" ? "all" : Number(event.target.value))}><option value="all">Todos os lotes</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select><button className="text-button" onClick={() => setMaterialSelection(materialSelection.length === filteredAccounts.length ? [] : filteredAccounts.map((item) => item.id))}>{materialSelection.length === filteredAccounts.length && filteredAccounts.length ? "limpar" : "selecionar todos"}</button></div>
-            <form className="material-bulk" onSubmit={applyMaterial}><strong>Aplicar em lote</strong><label>Dias<input type="number" min="0" value={materialDays} onChange={(event) => setMaterialDays(Math.max(0,Number(event.target.value)))}/></label><label>Escopo<input type="number" min="1" value={materialScope} onChange={(event) => setMaterialScope(Math.max(1,Number(event.target.value)))}/></label><button className="primary">Aplicar a {materialSelection.length || filteredAccounts.length}</button></form>
-            <div className="material-list">{filteredAccounts.map((account) => { const status = materialStatus(account); return <article className={materialSelection.includes(account.id) ? "selected" : ""} key={account.id}><input type="checkbox" checked={materialSelection.includes(account.id)} onChange={() => setMaterialSelection((current) => current.includes(account.id) ? current.filter((id) => id !== account.id) : [...current,account.id])}/><div><strong>{account.name}</strong><span>Lote {account.batch}</span></div><label>Dias<input type="number" min="0" value={status.remaining} onChange={(event) => updateAccount(account.id,{materialDays:Number(event.target.value),materialUpdatedAt:new Date().toISOString()})}/></label><label>Escopo<input type="number" min="1" value={account.materialScope} onChange={(event) => updateAccount(account.id,{materialScope:Number(event.target.value)})}/></label><div className="material-bar"><span>{status.remaining}/{account.materialScope} dias</span><i><b style={{width:`${status.percent}%`}}/></i></div></article>; })}</div>
+            <div className="material-toolbar"><select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" || event.target.value === "unbatched" ? event.target.value : Number(event.target.value))}><option value="all">Todos os lotes</option><option value="unbatched">Sem lote</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select><button className="text-button" onClick={() => setMaterialSelection(materialSelection.length === filteredAccounts.length ? [] : filteredAccounts.map((item) => item.id))}>{materialSelection.length === filteredAccounts.length && filteredAccounts.length ? "limpar" : "selecionar todos"}</button></div>
+            <form className="material-bulk" onSubmit={applyMaterial}><strong>Aplicar em lote</strong><label>Dias<input type="number" min="0" value={materialDays} onChange={(event) => setMaterialDays(Math.max(0,Number(event.target.value)))}/></label><label>Escopo<input type="number" min="1" value={materialScope} onChange={(event) => setMaterialScope(Math.max(1,Number(event.target.value)))}/></label><button className="primary" disabled={!materialSelection.length}>Aplicar a {materialSelection.length}</button></form>
+            <div className="material-list">{filteredAccounts.map((account) => { const status = materialStatus(account); return <article className={materialSelection.includes(account.id) ? "selected" : ""} key={account.id}><input type="checkbox" checked={materialSelection.includes(account.id)} onChange={() => setMaterialSelection((current) => current.includes(account.id) ? current.filter((id) => id !== account.id) : [...current,account.id])}/><div><strong>{account.name}</strong><span>{account.batch == null ? "Sem lote" : `Lote ${account.batch}`}</span></div><label>Dias<input type="number" min="0" value={status.remaining} onChange={(event) => updateAccount(account.id,{materialDays:Number(event.target.value),materialUpdatedAt:new Date().toISOString()})}/></label><label>Escopo<input type="number" min="1" value={account.materialScope} onChange={(event) => updateAccount(account.id,{materialScope:Number(event.target.value)})}/></label><div className="material-bar"><span>{status.remaining}/{account.materialScope} dias</span><i><b style={{width:`${status.percent}%`}}/></i></div></article>; })}</div>
           </div> : null}
 
           {operationView === "routine" ? <div className="routine-view">

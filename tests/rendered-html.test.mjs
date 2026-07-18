@@ -18,7 +18,8 @@ test("keeps the Grind shell, installable assets, and database sync connected", a
   const manifest = JSON.parse(manifestText);
   assert.equal(manifest.name, "Grind");
   assert.equal(manifest.display, "standalone");
-  assert.equal(manifest.icons[0].src, "/scheming-white-mark.png");
+  assert.equal(manifest.icons[0].src, "/grind-icon.png");
+  assert.equal(manifest.icons[1].src, "/grind-android-maskable.png");
   assert.equal(logo.subarray(1, 4).toString("ascii"), "PNG");
 
   assert.match(page, /localStorage\.getItem\("grind-v2"\)/);
@@ -31,7 +32,7 @@ test("keeps the Grind shell, installable assets, and database sync connected", a
   assert.match(layout, /title: "Grind"/);
   assert.match(css, /@media\(max-width:480px\)/);
   assert.match(css, /\.checked \.check\{/);
-  assert.match(serviceWorker, /scheming-white-mark\.png/);
+  assert.match(serviceWorker, /grind-android-maskable\.png/);
   assert.match(serviceWorker, /caches\.delete/);
   assert.match(supabase, /NEXT_PUBLIC_SUPABASE_URL/);
   assert.match(schema, /enable row level security/);
