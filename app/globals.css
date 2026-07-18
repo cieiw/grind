@@ -21,7 +21,7 @@ svg{width:18px;height:18px;fill:none;stroke:currentColor;stroke-width:1.8;stroke
 .main-tabs button,.operation-tabs button{height:36px;display:flex;align-items:center;gap:7px;padding:0 12px;color:var(--muted);border:1px solid transparent;border-radius:9px;background:transparent;font-weight:700}
 .main-tabs button:hover,.operation-tabs button:hover{color:var(--text);background:var(--panel)}
 .main-tabs button.active,.operation-tabs button.active{color:var(--accent-ink);border-color:color-mix(in srgb,var(--accent) 70%,transparent);background:var(--accent)}
-.top-actions{display:flex;align-items:center;gap:11px}.selected-date{color:var(--muted);font-size:11px;text-transform:capitalize}
+.top-actions{display:flex;align-items:center;gap:11px}.selected-date{color:var(--muted);font-size:11px;text-transform:capitalize}.database-status{font-size:10px;font-weight:750;color:var(--faint)}.database-status.saved{color:var(--muted)}.database-status.saving,.database-status.connecting{color:var(--accent)}.database-status.error{color:var(--danger)}
 .color-control{display:grid;place-items:center}.color-control input{width:28px;height:28px;padding:2px;border-radius:8px;cursor:pointer;background:var(--panel)}
 
 .today-view,.operation-view{padding-top:24px}

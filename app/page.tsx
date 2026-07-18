@@ -1,6 +1,6 @@
 "use client";
 
-import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useMemo, useState } from "react";
+import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 type Task = { id: string; label: string; done: boolean };
@@ -97,11 +97,15 @@ export default function Home() {
   const [loaded, setLoaded] = useState(false);
   const [databaseUserId, setDatabaseUserId] = useState<string | null>(null);
   const [databaseReady, setDatabaseReady] = useState(false);
+  const [databaseStatus, setDatabaseStatus] = useState<"connecting" | "saving" | "saved" | "error">("connecting");
+  const [databaseError, setDatabaseError] = useState("");
   const [authEmail, setAuthEmail] = useState("");
   const [authPassword, setAuthPassword] = useState("");
   const [authMessage, setAuthMessage] = useState("");
   const [authBusy, setAuthBusy] = useState(false);
-  const [data, setData] = useState<AppData>(() => initialData());
+  const [data, setDataState] = useState<AppData>(() => initialData());
+  const dataRef = useRef(data);
+  const saveTimerRef = useRef<number | null>(null);
   const [selectedDate, setSelectedDate] = useState(today);
   const [cursor, setCursor] = useState(() => new Date());
   const [accent, setAccent] = useState("#c9ff70");
@@ -125,11 +129,27 @@ export default function Home() {
   const [routinePeriodNumber, setRoutinePeriodNumber] = useState(1);
   const [routineDayNumber, setRoutineDayNumber] = useState(0);
 
+  function setData(nextState: AppData | ((current: AppData) => AppData)) {
+    const next = typeof nextState === "function" ? nextState(dataRef.current) : nextState;
+    dataRef.current = next;
+    setDataState(next);
+    if (!loaded || !databaseUserId || !databaseReady) return;
+    if (saveTimerRef.current) window.clearTimeout(saveTimerRef.current);
+    setDatabaseStatus("saving");
+    saveTimerRef.current = window.setTimeout(() => { void (async () => {
+      const supabase = getSupabaseBrowserClient();
+      if (!supabase) return;
+      const result = await supabase.from("grind_states").upsert({ user_id: databaseUserId, data: next, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+      if (result.error) { setDatabaseStatus("error"); setDatabaseError(result.error.message); return; }
+      setDatabaseStatus("saved"); setDatabaseError("");
+    })(); }, 500);
+  }
+
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const saved = localStorage.getItem("grind-v2");
       if (saved) {
-        try { const parsed = JSON.parse(saved) as AppData; setData(parsed); setAccent(parsed.accent ?? (localStorage.getItem("grind-accent") || "#c9ff70")); } catch { /* mantém a base inicial */ }
+        try { const parsed = JSON.parse(saved) as AppData; dataRef.current = parsed; setDataState(parsed); setAccent(parsed.accent ?? (localStorage.getItem("grind-accent") || "#c9ff70")); } catch { /* mantém a base inicial */ }
       } else {
         const legacy = localStorage.getItem("discipline-data");
         if (legacy) {
@@ -143,7 +163,7 @@ export default function Home() {
             }
             const firstHabits = Object.values(old).find((record) => record.habits?.length)?.habits;
             if (firstHabits) migrated.habits = firstHabits.map(({ id, label }) => ({ id, label }));
-            setData(migrated);
+            dataRef.current = migrated; setDataState(migrated);
           } catch { /* ignora dados antigos inválidos */ }
         }
       }
@@ -176,22 +196,23 @@ export default function Home() {
     const supabase = getSupabaseBrowserClient();
     if (!supabase) return;
     void (async () => {
-      const { data: remote } = await supabase.from("grind_states").select("data").eq("user_id", databaseUserId).maybeSingle();
-      if (remote?.data && Object.keys(remote.data as object).length) {
-        const remoteData = remote.data as AppData;
-        setData(remoteData);
-        setAccent(remoteData.accent ?? "#c9ff70");
+      setDatabaseStatus("connecting"); setDatabaseError("");
+      const result = await supabase.from("grind_states").select("data").eq("user_id", databaseUserId).maybeSingle();
+      if (result.error) {
+        setDatabaseStatus("error"); setDatabaseError(result.error.message); return;
       }
-      else await supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() });
-      setDatabaseReady(true);
+      if (result.data?.data && Object.keys(result.data.data as object).length) {
+        const remoteData = result.data.data as AppData;
+        dataRef.current = remoteData; setDataState(remoteData);
+        setAccent(remoteData.accent ?? "#c9ff70");
+      } else {
+        const write = await supabase.from("grind_states").upsert({ user_id: databaseUserId, data: dataRef.current, updated_at: new Date().toISOString() }, { onConflict: "user_id" });
+        if (write.error) {
+          setDatabaseStatus("error"); setDatabaseError(write.error.message); return;
+        }
+      }
+      setDatabaseReady(true); setDatabaseStatus("saved");
     })();
-  }, [data, databaseReady, databaseUserId, loaded]);
-  useEffect(() => {
-    if (!loaded || !databaseUserId || !databaseReady) return;
-    const supabase = getSupabaseBrowserClient();
-    if (!supabase) return;
-    const timer = window.setTimeout(() => { void supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() }); }, 700);
-    return () => window.clearTimeout(timer);
   }, [data, databaseReady, databaseUserId, loaded]);
   useEffect(() => { if (loaded) localStorage.setItem("grind-accent", accent); }, [accent, loaded]);
 
@@ -318,12 +339,12 @@ export default function Home() {
     setAuthBusy(false);
     if (result.error) { setAuthMessage(result.error.message); return; }
     if (!result.data.user || !result.data.session) { setAuthMessage("Não foi possível entrar. Confira seu e-mail e senha."); return; }
-    setDatabaseReady(false); setDatabaseUserId(result.data.user.id); setAuthPassword("");
+    setDatabaseReady(false); setDatabaseStatus("connecting"); setDatabaseError(""); setDatabaseUserId(result.data.user.id); setAuthPassword("");
   }
   async function signOut() {
     const supabase = getSupabaseBrowserClient();
     if (supabase) await supabase.auth.signOut();
-    setDatabaseReady(false); setDatabaseUserId(null); setAuthPassword("");
+    setDatabaseReady(false); setDatabaseStatus("connecting"); setDatabaseError(""); setDatabaseUserId(null); setAuthPassword("");
   }
 
   if (!loaded) return <main className="loading-state">Carregando…</main>;
@@ -348,7 +369,7 @@ export default function Home() {
         <button aria-label="Hoje" className={mainView === "today" ? "active" : ""} onClick={() => setMainView("today")}><Icon name="today"/><span>Hoje</span></button>
         <button aria-label="Operação" className={mainView === "operation" ? "active" : ""} onClick={() => setMainView("operation")}><Icon name="operation"/><span>Operação</span></button>
       </nav>
-      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => { const nextAccent = event.currentTarget.value; setAccent(nextAccent); setData((current) => ({ ...current, accent: nextAccent })); }} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
+      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><span className={`database-status ${databaseStatus}`} title={databaseError || "Dados salvos no Supabase"}>{databaseStatus === "saved" ? "salvo" : databaseStatus === "saving" ? "salvando…" : databaseStatus === "error" ? "erro ao salvar" : "conectando…"}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => { const nextAccent = event.currentTarget.value; setAccent(nextAccent); setData((current) => ({ ...current, accent: nextAccent })); }} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
     </header>
 
     {mainView === "today" ? <div className="today-view">
