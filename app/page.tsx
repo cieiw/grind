@@ -1,6 +1,10 @@
 "use client";
+/* eslint-disable react-hooks/refs -- dnd-kit exposes callback refs and listeners for sortable elements. */
 
 import { CSSProperties, FormEvent, KeyboardEvent, useEffect, useMemo, useRef, useState } from "react";
+import { DndContext, DragEndEvent, KeyboardSensor, PointerSensor, useSensor, useSensors } from "@dnd-kit/core";
+import { arrayMove, rectSortingStrategy, SortableContext, sortableKeyboardCoordinates, useSortable, verticalListSortingStrategy } from "@dnd-kit/sortable";
+import { CSS } from "@dnd-kit/utilities";
 import { getSupabaseBrowserClient } from "@/lib/supabase";
 
 type Task = { id: string; label: string; done: boolean };
@@ -107,6 +111,12 @@ function Icon({ name }: { name: "today" | "operation" | "overview" | "profile" |
   return <svg viewBox="0 0 24 24" aria-hidden="true">{paths[name]}</svg>;
 }
 
+function SortableItem({ id, className, children }: { id: string; className?: string; children: (handle: { attributes: ReturnType<typeof useSortable>["attributes"]; listeners: ReturnType<typeof useSortable>["listeners"] }) => React.ReactNode }) {
+  const sortable = useSortable({ id });
+  const style = { transform: CSS.Transform.toString(sortable.transform), transition: sortable.transition };
+  return <div ref={sortable.setNodeRef} style={style} className={className}>{children({ attributes: sortable.attributes, listeners: sortable.listeners })}</div>;
+}
+
 export default function Home() {
   const today = localDateKey(new Date());
   const [loaded, setLoaded] = useState(false);
@@ -121,6 +131,7 @@ export default function Home() {
   const [data, setDataState] = useState<AppData>(() => initialData());
   const dataRef = useRef(data);
   const saveTimerRef = useRef<number | null>(null);
+  const summaryRef = useRef<HTMLTextAreaElement | null>(null);
   const [selectedDate, setSelectedDate] = useState(today);
   const [cursor, setCursor] = useState(() => new Date());
   const [accent, setAccent] = useState("#c9ff70");
@@ -143,6 +154,8 @@ export default function Home() {
   const [routinePeriodType, setRoutinePeriodType] = useState<PeriodType>("week");
   const [routinePeriodNumber, setRoutinePeriodNumber] = useState(1);
   const [routineDayNumber, setRoutineDayNumber] = useState(0);
+  const [overviewAccountIds, setOverviewAccountIds] = useState<string[]>([]);
+  const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 7 } }), useSensor(KeyboardSensor, { coordinateGetter: sortableKeyboardCoordinates }));
 
   function setData(nextState: AppData | ((current: AppData) => AppData)) {
     const next = typeof nextState === "function" ? nextState(dataRef.current) : nextState;
@@ -158,6 +171,35 @@ export default function Home() {
       if (result.error) { setDatabaseStatus("error"); setDatabaseError(result.error.message); return; }
       setDatabaseStatus("saved"); setDatabaseError("");
     })(); }, 500);
+  }
+
+  function resizeSummary(element: HTMLTextAreaElement) {
+    element.style.height = "72px";
+    element.style.height = `${Math.max(72, element.scrollHeight)}px`;
+  }
+
+  function reorderGroups(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    updateGroups((current) => arrayMove(current, current.findIndex((item) => item.id === active.id), current.findIndex((item) => item.id === over.id)));
+  }
+
+  function reorderTasks(groupId: string, event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    updateGroups((current) => current.map((group) => group.id !== groupId ? group : { ...group, tasks: arrayMove(group.tasks, group.tasks.findIndex((item) => item.id === active.id), group.tasks.findIndex((item) => item.id === over.id)) }));
+  }
+
+  function reorderHabits(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setData((current) => ({ ...current, habits: arrayMove(current.habits, current.habits.findIndex((item) => item.id === active.id), current.habits.findIndex((item) => item.id === over.id)) }));
+  }
+
+  function reorderAccounts(event: DragEndEvent) {
+    const { active, over } = event;
+    if (!over || active.id === over.id) return;
+    setData((current) => ({ ...current, accounts: arrayMove(current.accounts, current.accounts.findIndex((item) => item.id === active.id), current.accounts.findIndex((item) => item.id === over.id)) }));
   }
 
   useEffect(() => {
@@ -230,6 +272,7 @@ export default function Home() {
     })();
   }, [data, databaseReady, databaseUserId, loaded]);
   useEffect(() => { if (loaded) localStorage.setItem("grind-accent", accent); }, [accent, loaded]);
+  useEffect(() => { const frame = requestAnimationFrame(() => { if (summaryRef.current) resizeSummary(summaryRef.current); }); return () => cancelAnimationFrame(frame); }, [data.summaries, selectedDate]);
 
   const groups = data.tasks[selectedDate] ?? defaultGroups();
   const pendingTaskCount = groups.reduce((total, group) => total + group.tasks.filter((task) => task.label.trim() && !task.done).length, 0);
@@ -260,6 +303,7 @@ export default function Home() {
     return items;
   }, [data.accounts, batchFilter, sortMode]);
   const batchNumbers = [...new Set(data.accounts.map((item) => item.batch).filter((batch): batch is number => batch != null))].sort((a, b) => a - b);
+  const overviewAccounts = overviewAccountIds.length ? filteredAccounts.filter((account) => overviewAccountIds.includes(account.id)) : filteredAccounts;
 
   function updateGroups(transform: (current: Group[]) => Group[]) {
     setData((current) => ({ ...current, tasks: { ...current.tasks, [selectedDate]: transform(current.tasks[selectedDate] ?? defaultGroups()) } }));
@@ -327,9 +371,6 @@ export default function Home() {
     const account: Account = { id: uid(), name: accountName.trim(), instagramUrl: "", batch: null, createdAt: today, views: 0, posts: 0, materialDays: 0, materialScope: 30, materialUpdatedAt: new Date().toISOString(), notes: "", completedRoutine: [], snapshots: [] };
     setData((current) => ({ ...current, accounts: [...current.accounts, account] })); setSelectedAccountId(account.id); setAccountName("");
   }
-  function moveAccount(id: string, direction: -1 | 1) {
-    setData((current) => { const index = current.accounts.findIndex((item) => item.id === id); const target = index + direction; if (index < 0 || target < 0 || target >= current.accounts.length) return current; const accounts = [...current.accounts]; [accounts[index], accounts[target]] = [accounts[target], accounts[index]]; return { ...current, accounts }; });
-  }
   function accountRoutine(account: Account) {
     const time = timeline(account);
     return data.routineTemplates.filter((item) => item.periodType === time.periodType && item.periodNumber === time.periodNumber && (item.dayNumber === 0 || item.dayNumber === time.dayNumber));
@@ -391,18 +432,14 @@ export default function Home() {
     {mainView === "today" ? <div className="today-view">
       <div className="task-workspace">
         <section className="panel daily-summary">
-          <textarea value={data.summaries?.[selectedDate] ?? ""} onInput={(event) => { event.currentTarget.style.height = "72px"; event.currentTarget.style.height = `${Math.max(72, event.currentTarget.scrollHeight)}px`; }} onChange={(event) => setData((current) => ({ ...current, summaries: { ...(current.summaries ?? {}), [selectedDate]: event.target.value } }))} placeholder="Escreva o que importa hoje: foco, decisões, aprendizados ou próximos passos." aria-label="Resumo do dia" />
+          <textarea ref={summaryRef} value={data.summaries?.[selectedDate] ?? ""} onInput={(event) => resizeSummary(event.currentTarget)} onChange={(event) => setData((current) => ({ ...current, summaries: { ...(current.summaries ?? {}), [selectedDate]: event.target.value } }))} placeholder="Escreva o que importa hoje: foco, decisões, aprendizados ou próximos passos." aria-label="Resumo do dia" />
         </section>
         <section className="tasks-section">
-        <div className="group-grid">{groups.map((group) => <article className="task-group" key={group.id}>
-          <div className="group-title"><input value={group.title} onChange={(event) => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, title: event.target.value } : item))} aria-label="Nome do grupo"/><button onClick={() => updateGroups((current) => current.filter((item) => item.id !== group.id))} aria-label="Excluir grupo">×</button></div>
-          <div className="task-list">{group.tasks.map((task) => <div className={`task-row ${task.done ? "checked" : ""}`} key={task.id}>
-            <button className="check" onClick={() => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.map((row) => row.id === task.id ? { ...row, done: !row.done } : row) } : item))} aria-label="Concluir tarefa">✓</button>
-            <input id={task.id} value={task.label} placeholder="Escreva uma tarefa" onChange={(event) => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.map((row) => row.id === task.id ? { ...row, label: event.target.value } : row) } : item))} onKeyDown={(event) => addTaskAfter(event, group.id, task.id)}/>
-            <button className="quiet-delete" onClick={() => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.filter((row) => row.id !== task.id) } : item))} aria-label="Excluir tarefa">×</button>
-          </div>)}</div>
+        <DndContext sensors={sensors} onDragEnd={reorderGroups}><SortableContext items={groups.map((group) => group.id)} strategy={rectSortingStrategy}><div className="group-grid">{groups.map((group) => <SortableItem id={group.id} key={group.id}>{groupHandle => <article className="task-group">
+          <div className="group-title"><button className="drag-handle" {...groupHandle.attributes} {...groupHandle.listeners} aria-label="Arrastar grupo">⠿</button><input value={group.title} onChange={(event) => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, title: event.target.value } : item))} aria-label="Nome do grupo"/><button onClick={() => updateGroups((current) => current.filter((item) => item.id !== group.id))} aria-label="Excluir grupo">×</button></div>
+          <DndContext sensors={sensors} onDragEnd={(event) => reorderTasks(group.id, event)}><SortableContext items={group.tasks.map((task) => task.id)} strategy={verticalListSortingStrategy}><div className="task-list">{group.tasks.map((task) => <SortableItem id={task.id} className={`task-row ${task.done ? "checked" : ""}`} key={task.id}>{taskHandle => <><button className="drag-handle" {...taskHandle.attributes} {...taskHandle.listeners} aria-label="Arrastar tarefa">⠿</button><button className="check" onClick={() => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.map((row) => row.id === task.id ? { ...row, done: !row.done } : row) } : item))} aria-label="Concluir tarefa">✓</button><input id={task.id} value={task.label} placeholder="Escreva uma tarefa" onChange={(event) => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.map((row) => row.id === task.id ? { ...row, label: event.target.value } : row) } : item))} onKeyDown={(event) => addTaskAfter(event, group.id, task.id)}/><button className="quiet-delete" onClick={() => updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: item.tasks.filter((row) => row.id !== task.id) } : item))} aria-label="Excluir tarefa">×</button></>}</SortableItem>)}</div></SortableContext></DndContext>
           <button className="text-button" onClick={() => { const id = uid(); updateGroups((current) => current.map((item) => item.id === group.id ? { ...item, tasks: [...item.tasks, { id, label: "", done: false }] } : item)); requestAnimationFrame(() => document.getElementById(id)?.focus()); }}>+ tarefa</button>
-        </article>)}</div>
+        </article>}</SortableItem>)}</div></SortableContext></DndContext>
         <div className="section-actions task-actions"><button className="rollover-button" disabled={!pendingTaskCount} onClick={rolloverPendingTasks} title="Mover tarefas não concluídas para o dia seguinte"><span>{pendingTaskCount || ""}</span> pendentes → amanhã</button><button className="primary compact-button" onClick={() => updateGroups((current) => [...current, { id: uid(), title: "Novo grupo", tasks: [{ id: uid(), label: "", done: false }] }])}>+ grupo</button></div>
         </section>
       </div>
@@ -410,7 +447,7 @@ export default function Home() {
       <div className="daily-grid">
         <section className="panel habits-panel">
           <div className="section-line"><span className="count-pill">{checkedHabits.length}/{data.habits.length}</span></div>
-          <div className="habit-list">{data.habits.map((habit) => <label className={`habit-row ${checkedHabits.includes(habit.id) ? "checked" : ""}`} key={habit.id}><input type="checkbox" checked={checkedHabits.includes(habit.id)} onChange={() => setData((current) => { const currentChecks = current.habitChecks[selectedDate] ?? []; return { ...current, habitChecks: { ...current.habitChecks, [selectedDate]: currentChecks.includes(habit.id) ? currentChecks.filter((id) => id !== habit.id) : [...currentChecks, habit.id] } }; })}/><span className="check">✓</span><span>{habit.label}</span><small>{habitStreak(habit.id)}d</small><button onClick={() => setData((current) => ({ ...current, habits: current.habits.filter((item) => item.id !== habit.id) }))}>×</button></label>)}</div>
+          <DndContext sensors={sensors} onDragEnd={reorderHabits}><SortableContext items={data.habits.map((habit) => habit.id)} strategy={verticalListSortingStrategy}><div className="habit-list">{data.habits.map((habit) => <SortableItem id={habit.id} className={`habit-row ${checkedHabits.includes(habit.id) ? "checked" : ""}`} key={habit.id}>{habitHandle => <><button className="drag-handle" {...habitHandle.attributes} {...habitHandle.listeners} aria-label="Arrastar hábito">⠿</button><input id={`habit-${habit.id}`} type="checkbox" checked={checkedHabits.includes(habit.id)} onChange={() => setData((current) => { const currentChecks = current.habitChecks[selectedDate] ?? []; return { ...current, habitChecks: { ...current.habitChecks, [selectedDate]: currentChecks.includes(habit.id) ? currentChecks.filter((id) => id !== habit.id) : [...currentChecks, habit.id] } }; })}/><label htmlFor={`habit-${habit.id}`} className="check">✓</label><span>{habit.label}</span><small>{habitStreak(habit.id)}d</small><button onClick={() => setData((current) => ({ ...current, habits: current.habits.filter((item) => item.id !== habit.id) }))}>×</button></>}</SortableItem>)}</div></SortableContext></DndContext>
           <form className="inline-add" onSubmit={(event) => { event.preventDefault(); if (!habitName.trim()) return; setData((current) => ({ ...current, habits: [...current.habits, { id: uid(), label: habitName.trim() }] })); setHabitName(""); }}><input value={habitName} onChange={(event) => setHabitName(event.target.value)} placeholder="Novo hábito"/><button className="primary">+</button></form>
         </section>
 
@@ -447,12 +484,12 @@ export default function Home() {
 
         <section className="operation-workspace">
           {operationView === "overview" ? <>
-            <div className="workspace-tools"><label>Cards <input type="range" min="170" max="300" value={cardSize} onChange={(event) => setCardSize(Number(event.target.value))}/></label><select value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="manual">Ordem manual</option><option value="old">Mais antigas</option><option value="new">Mais novas</option></select></div>
-            <div className="overview-grid" style={{ "--card-size": `${cardSize}px` } as CSSProperties}>{filteredAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; const material = materialStatus(account); const snapshots = [...account.snapshots].sort((a,b) => a.recordedAt.localeCompare(b.recordedAt)); const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].views : 0; const growth = previous ? ((account.views - previous) / previous) * 100 : 0; return <article className="overview-card" key={account.id}>
-              <div className="card-head"><button onClick={() => { setSelectedAccountId(account.id); setOperationView("profile"); }}><strong>{account.name}</strong><span>dia {time.absoluteDay}</span></button><div><button onClick={() => moveAccount(account.id,-1)} aria-label="Mover para cima">←</button><button onClick={() => moveAccount(account.id,1)} aria-label="Mover para baixo">→</button><button onClick={() => setData((current) => ({ ...current, accounts: current.accounts.filter((item) => item.id !== account.id) }))} aria-label="Excluir">×</button></div></div>
+            <div className="workspace-tools"><label>Cards <input type="range" min="170" max="300" value={cardSize} onChange={(event) => setCardSize(Number(event.target.value))}/></label><select value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="manual">Arrastar para ordenar</option><option value="old">Mais antigas</option><option value="new">Mais novas</option></select><details className="model-filter"><summary>{overviewAccountIds.length ? `${overviewAccountIds.length} modelos` : "Todas modelos"}</summary><div>{filteredAccounts.map((account) => <label key={account.id}><input type="checkbox" checked={overviewAccountIds.includes(account.id)} onChange={() => setOverviewAccountIds((current) => current.includes(account.id) ? current.filter((id) => id !== account.id) : [...current, account.id])}/><span>{account.name}</span></label>)}<button type="button" onClick={() => setOverviewAccountIds([])}>Mostrar todas</button></div></details></div>
+            <DndContext sensors={sensors} onDragEnd={reorderAccounts}><SortableContext items={overviewAccounts.map((account) => account.id)} strategy={rectSortingStrategy}><div className="overview-grid" style={{ "--card-size": `${cardSize}px` } as CSSProperties}>{overviewAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; const material = materialStatus(account); const snapshots = [...account.snapshots].sort((a,b) => a.recordedAt.localeCompare(b.recordedAt)); const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].views : 0; const growth = previous ? ((account.views - previous) / previous) * 100 : 0; return <SortableItem id={account.id} key={account.id}>{accountHandle => <article className="overview-card">
+              <div className="card-head"><button onClick={() => { setSelectedAccountId(account.id); setOperationView("profile"); }}><strong>{account.name}</strong><span>dia {time.absoluteDay}</span></button><div><button className="drag-handle" {...accountHandle.attributes} {...accountHandle.listeners} aria-label="Arrastar modelo">⠿</button><button onClick={() => setData((current) => ({ ...current, accounts: current.accounts.filter((item) => item.id !== account.id) }))} aria-label="Excluir">×</button></div></div>
               <dl><div><dt>Views</dt><dd>{compact.format(account.views)}</dd></div><div><dt>Reels</dt><dd>{account.posts}</dd></div><div><dt>Rotina</dt><dd>{done}/{routine.length}</dd></div><div><dt>Var.</dt><dd className={growth >= 0 ? "positive" : "negative"}>{growth ? `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%` : "–"}</dd></div></dl>
               <div className="card-progress"><span>rotina</span><i><b style={{ width: `${routine.length ? done / routine.length * 100 : 0}%` }}/></i></div><div className="card-progress"><span>material · {material.remaining}/{account.materialScope}d</span><i><b style={{ width: `${material.percent}%` }}/></i></div>
-            </article>; })}</div>
+            </article>}</SortableItem>; })}</div></SortableContext></DndContext>
           </> : null}
 
           {operationView === "profile" ? selectedAccount ? <div className="profile-view">
