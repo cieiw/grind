@@ -17,7 +17,7 @@ type Account = {
 };
 type AppData = {
   revenue: Record<string, string>; tasks: Record<string, Group[]>; habits: Habit[]; habitChecks: Record<string, string[]>;
-  summaries: Record<string, string>; revenueGoal: string; revenueGoalStart: string; revenueGoalEnd: string; stickies: Sticky[]; accounts: Account[]; routineTemplates: RoutineTemplate[];
+  summaries: Record<string, string>; revenueGoal: string; revenueGoalStart: string; revenueGoalEnd: string; accent: string; stickies: Sticky[]; accounts: Account[]; routineTemplates: RoutineTemplate[];
 };
 type MainView = "today" | "operation";
 type OperationView = "overview" | "profile" | "material" | "routine";
@@ -42,7 +42,7 @@ const defaultTemplates = (): RoutineTemplate[] => [
 ];
 const initialData = (): AppData => ({
   revenue: {}, tasks: {}, habits: ["Treinar", "Leitura", "Planejar amanhã"].map((label) => ({ id: uid(), label })),
-  habitChecks: {}, summaries: {}, revenueGoal: "1000", revenueGoalStart: `${new Date().getFullYear()}-01-01`, revenueGoalEnd: `${new Date().getFullYear()}-12-31`, stickies: [], accounts: [], routineTemplates: defaultTemplates(),
+  habitChecks: {}, summaries: {}, revenueGoal: "1000", revenueGoalStart: `${new Date().getFullYear()}-01-01`, revenueGoalEnd: `${new Date().getFullYear()}-12-31`, accent: "#c9ff70", stickies: [], accounts: [], routineTemplates: defaultTemplates(),
 });
 
 function addDuration(value: number, unit: "days" | "weeks" | "months") {
@@ -129,7 +129,7 @@ export default function Home() {
     const frame = requestAnimationFrame(() => {
       const saved = localStorage.getItem("grind-v2");
       if (saved) {
-        try { setData(JSON.parse(saved) as AppData); } catch { /* mantém a base inicial */ }
+        try { const parsed = JSON.parse(saved) as AppData; setData(parsed); setAccent(parsed.accent ?? (localStorage.getItem("grind-accent") || "#c9ff70")); } catch { /* mantém a base inicial */ }
       } else {
         const legacy = localStorage.getItem("discipline-data");
         if (legacy) {
@@ -147,7 +147,7 @@ export default function Home() {
           } catch { /* ignora dados antigos inválidos */ }
         }
       }
-      setAccent(localStorage.getItem("grind-accent") || "#c9ff70");
+      setAccent((current) => current || localStorage.getItem("grind-accent") || "#c9ff70");
 
       const supabase = getSupabaseBrowserClient();
       if (!supabase) {
@@ -177,7 +177,11 @@ export default function Home() {
     if (!supabase) return;
     void (async () => {
       const { data: remote } = await supabase.from("grind_states").select("data").eq("user_id", databaseUserId).maybeSingle();
-      if (remote?.data && Object.keys(remote.data as object).length) setData(remote.data as AppData);
+      if (remote?.data && Object.keys(remote.data as object).length) {
+        const remoteData = remote.data as AppData;
+        setData(remoteData);
+        setAccent(remoteData.accent ?? "#c9ff70");
+      }
       else await supabase.from("grind_states").upsert({ user_id: databaseUserId, data, updated_at: new Date().toISOString() });
       setDatabaseReady(true);
     })();
@@ -344,7 +348,7 @@ export default function Home() {
         <button aria-label="Hoje" className={mainView === "today" ? "active" : ""} onClick={() => setMainView("today")}><Icon name="today"/><span>Hoje</span></button>
         <button aria-label="Operação" className={mainView === "operation" ? "active" : ""} onClick={() => setMainView("operation")}><Icon name="operation"/><span>Operação</span></button>
       </nav>
-      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => setAccent(event.currentTarget.value)} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
+      <div className="top-actions"><span className="selected-date">{parseDate(selectedDate).toLocaleDateString("pt-BR", { weekday: "short", day: "2-digit", month: "short" })}</span><label className="color-control" title="Cor do aplicativo"><input type="color" value={accent} onInput={(event) => { const nextAccent = event.currentTarget.value; setAccent(nextAccent); setData((current) => ({ ...current, accent: nextAccent })); }} aria-label="Cor do aplicativo" /></label>{supabaseConfigured ? <button className="logout-button" onClick={signOut}>sair</button> : null}</div>
     </header>
 
     {mainView === "today" ? <div className="today-view">
