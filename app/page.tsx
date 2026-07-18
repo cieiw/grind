@@ -219,11 +219,6 @@ export default function Home() {
     });
   }
 
-  async function copyVisibleInstagram() {
-    const links = overviewAccounts.map((account) => account.instagramUrl.trim()).filter(Boolean);
-    if (links.length) await navigator.clipboard.writeText(links.join("\n"));
-  }
-
   useEffect(() => {
     const frame = requestAnimationFrame(() => {
       const saved = localStorage.getItem("grind-v2");
@@ -380,6 +375,7 @@ export default function Home() {
   }
   function habitStreak(habitId: string) {
     let count = 0; const cursorDate = parseDate(today);
+    if (!(data.habitChecks[localDateKey(cursorDate)] ?? []).includes(habitId)) cursorDate.setDate(cursorDate.getDate() - 1);
     while ((data.habitChecks[localDateKey(cursorDate)] ?? []).includes(habitId)) { count++; cursorDate.setDate(cursorDate.getDate() - 1); }
     return count;
   }
@@ -506,7 +502,7 @@ export default function Home() {
 
         <section className="operation-workspace">
           {operationView === "overview" ? <>
-            <div className="workspace-tools"><label>Cards <input type="range" min="170" max="300" value={cardSize} onChange={(event) => setCardSize(Number(event.target.value))}/></label><select value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="manual">Arrastar para ordenar</option><option value="old">Mais antigas</option><option value="new">Mais novas</option></select>{overviewAccountIds.length ? <button className="text-button" onClick={() => setOverviewAccountIds([])}>mostrar todas</button> : null}<button className="open-all-instagrams" onClick={openVisibleInstagram} disabled={!overviewAccounts.some((account) => account.instagramUrl.trim())}>abrir Instagrams</button><button className="text-button" onClick={copyVisibleInstagram} disabled={!overviewAccounts.some((account) => account.instagramUrl.trim())}>copiar links</button></div>
+            <div className="workspace-tools"><label>Cards <input type="range" min="170" max="300" value={cardSize} onChange={(event) => setCardSize(Number(event.target.value))}/></label><select value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="manual">Arrastar para ordenar</option><option value="old">Mais antigas</option><option value="new">Mais novas</option></select>{overviewAccountIds.length ? <button className="text-button" onClick={() => setOverviewAccountIds([])}>mostrar todas</button> : null}<button className="open-all-instagrams" onClick={openVisibleInstagram} disabled={!overviewAccounts.some((account) => account.instagramUrl.trim())}>abrir Instagrams</button></div>
             <DndContext sensors={sensors} onDragEnd={reorderAccounts}><SortableContext items={overviewAccounts.map((account) => account.id)} strategy={rectSortingStrategy}><div className="overview-grid" style={{ "--card-size": `${cardSize}px` } as CSSProperties}>{overviewAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; const material = materialStatus(account); const snapshots = [...account.snapshots].sort((a,b) => a.recordedAt.localeCompare(b.recordedAt)); const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].views : 0; const growth = previous ? ((account.views - previous) / previous) * 100 : 0; return <SortableItem id={account.id} key={account.id}>{accountHandle => <article className="overview-card">
               <div className="card-head"><button onClick={() => { setSelectedAccountId(account.id); setOperationView("profile"); }}><strong>{account.name}</strong><span>dia {time.absoluteDay}</span></button><div>{account.instagramUrl.trim() ? <a className="instagram-link" href={account.instagramUrl} target="_blank" rel="noreferrer" aria-label={`Abrir Instagram de ${account.name}`} title="Abrir Instagram">◎</a> : null}<button className="drag-handle" {...accountHandle.attributes} {...accountHandle.listeners} aria-label="Arrastar modelo">⠿</button><button onClick={() => setData((current) => ({ ...current, accounts: current.accounts.filter((item) => item.id !== account.id) }))} aria-label="Excluir">×</button></div></div>
               <dl><div><dt>Views</dt><dd>{compact.format(account.views)}</dd></div><div><dt>Reels</dt><dd>{account.posts}</dd></div><div><dt>Rotina</dt><dd>{done}/{routine.length}</dd></div><div><dt>Var.</dt><dd className={growth >= 0 ? "positive" : "negative"}>{growth ? `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%` : "–"}</dd></div></dl>
