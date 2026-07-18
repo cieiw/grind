@@ -1,1 +1,1 @@
-{"name":"Grind","short_name":"Grind","start_url":"/","display":"standalone","background_color":"#0b0e0d","theme_color":"#0b0e0d","icons":[{"src":"/scheming-white-mark.png","sizes":"512x512","type":"image/png","purpose":"any"}]}
+{"name":"Grind","short_name":"Grind","start_url":"/","display":"standalone","background_color":"#0b0e0d","theme_color":"#0b0e0d","icons":[{"src":"/grind-icon.png","sizes":"512x512","type":"image/png","purpose":"any"},{"src":"/grind-android-maskable.png","sizes":"512x512","type":"image/png","purpose":"maskable"}]}
