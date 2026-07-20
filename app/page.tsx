@@ -14,9 +14,11 @@ type Sticky = { id: string; text: string; expiresAt: string };
 type PeriodType = "week" | "month";
 type Snapshot = { id: string; periodType: PeriodType; periodNumber: number; views: number; posts: number; recordedAt: string };
 type RoutineTemplate = { id: string; periodType: PeriodType; periodNumber: number; dayNumber: number; title: string; description: string; trackPosts: boolean };
+type MaterialKind = "reels" | "photos";
 type Account = {
   id: string; name: string; instagramUrl: string; batch: number | null; createdAt: string;
   views: number; posts: number; materialDays: number; materialScope: number; materialUpdatedAt: string;
+  photoMaterialDays?: number; photoMaterialScope?: number; photoMaterialUpdatedAt?: string;
   notes: string; completedRoutine: string[]; snapshots: Snapshot[];
 };
 type AppData = {
@@ -86,10 +88,14 @@ function timeline(account: Account) {
   return { absoluteDay, periodType: "month" as PeriodType, periodNumber, dayNumber: Math.max(1, Math.floor((now.getTime() - periodStart.getTime()) / 86400000) + 1) };
 }
 
-function materialStatus(account: Account) {
-  const elapsed = Math.max(0, Math.floor((Date.now() - new Date(account.materialUpdatedAt).getTime()) / 86400000));
-  const remaining = Math.max(0, account.materialDays - elapsed);
-  return { remaining, percent: Math.min(100, Math.round((remaining / Math.max(1, account.materialScope)) * 100)) };
+function materialStatus(account: Account, kind: MaterialKind = "reels") {
+  const isPhotos = kind === "photos";
+  const days = isPhotos ? account.photoMaterialDays ?? 0 : account.materialDays;
+  const scope = isPhotos ? account.photoMaterialScope ?? 30 : account.materialScope;
+  const updatedAt = isPhotos ? account.photoMaterialUpdatedAt ?? account.materialUpdatedAt : account.materialUpdatedAt;
+  const elapsed = Math.max(0, Math.floor((Date.now() - new Date(updatedAt).getTime()) / 86400000));
+  const remaining = Math.max(0, days - elapsed);
+  return { remaining, scope, percent: Math.min(100, Math.round((remaining / Math.max(1, scope)) * 100)) };
 }
 
 function accentInk(hex: string) {
@@ -153,6 +159,7 @@ export default function Home() {
   const [sortMode, setSortMode] = useState<"manual" | "old" | "new">("manual");
   const [cardSize, setCardSize] = useState(210);
   const [materialSelection, setMaterialSelection] = useState<string[]>([]);
+  const [materialKind, setMaterialKind] = useState<MaterialKind>("reels");
   const [materialDays, setMaterialDays] = useState(0);
   const [materialScope, setMaterialScope] = useState(30);
   const [routinePeriodType, setRoutinePeriodType] = useState<PeriodType>("week");
@@ -386,7 +393,7 @@ export default function Home() {
   }
   function createAccount(event: FormEvent) {
     event.preventDefault(); if (!accountName.trim()) return;
-    const account: Account = { id: uid(), name: accountName.trim(), instagramUrl: "", batch: null, createdAt: today, views: 0, posts: 0, materialDays: 0, materialScope: 30, materialUpdatedAt: new Date().toISOString(), notes: "", completedRoutine: [], snapshots: [] };
+    const account: Account = { id: uid(), name: accountName.trim(), instagramUrl: "", batch: null, createdAt: today, views: 0, posts: 0, materialDays: 0, materialScope: 30, materialUpdatedAt: new Date().toISOString(), photoMaterialDays: 0, photoMaterialScope: 30, photoMaterialUpdatedAt: new Date().toISOString(), notes: "", completedRoutine: [], snapshots: [] };
     setData((current) => ({ ...current, accounts: [...current.accounts, account] })); setSelectedAccountId(account.id); setAccountName("");
   }
   function accountRoutine(account: Account) {
@@ -403,7 +410,8 @@ export default function Home() {
   function applyMaterial(event: FormEvent) {
     event.preventDefault(); const targets = materialSelection;
     if (!targets.length) return;
-    setData((current) => ({ ...current, accounts: current.accounts.map((item) => targets.includes(item.id) ? { ...item, materialDays, materialScope, materialUpdatedAt: new Date().toISOString() } : item) }));
+    const now = new Date().toISOString();
+    setData((current) => ({ ...current, accounts: current.accounts.map((item) => targets.includes(item.id) ? materialKind === "reels" ? { ...item, materialDays, materialScope, materialUpdatedAt: now } : { ...item, photoMaterialDays: materialDays, photoMaterialScope: materialScope, photoMaterialUpdatedAt: now } : item) }));
   }
   async function authenticate(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -503,10 +511,10 @@ export default function Home() {
         <section className="operation-workspace">
           {operationView === "overview" ? <>
             <div className="workspace-tools"><label>Cards <input type="range" min="170" max="300" value={cardSize} onChange={(event) => setCardSize(Number(event.target.value))}/></label><select value={sortMode} onChange={(event) => setSortMode(event.target.value as typeof sortMode)}><option value="manual">Arrastar para ordenar</option><option value="old">Mais antigas</option><option value="new">Mais novas</option></select>{overviewAccountIds.length ? <button className="text-button" onClick={() => setOverviewAccountIds([])}>mostrar todas</button> : null}<button className="open-all-instagrams" onClick={openVisibleInstagram} disabled={!overviewAccounts.some((account) => account.instagramUrl.trim())}>abrir Instagrams</button></div>
-            <DndContext sensors={sensors} onDragEnd={reorderAccounts}><SortableContext items={overviewAccounts.map((account) => account.id)} strategy={rectSortingStrategy}><div className="overview-grid" style={{ "--card-size": `${cardSize}px` } as CSSProperties}>{overviewAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; const material = materialStatus(account); const snapshots = [...account.snapshots].sort((a,b) => a.recordedAt.localeCompare(b.recordedAt)); const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].views : 0; const growth = previous ? ((account.views - previous) / previous) * 100 : 0; return <SortableItem id={account.id} key={account.id}>{accountHandle => <article className="overview-card">
+            <DndContext sensors={sensors} onDragEnd={reorderAccounts}><SortableContext items={overviewAccounts.map((account) => account.id)} strategy={rectSortingStrategy}><div className="overview-grid" style={{ "--card-size": `${cardSize}px` } as CSSProperties}>{overviewAccounts.map((account) => { const time = timeline(account); const routine = accountRoutine(account); const done = routine.filter((item) => account.completedRoutine.includes(item.id)).length; const reelsMaterial = materialStatus(account, "reels"); const photosMaterial = materialStatus(account, "photos"); const snapshots = [...account.snapshots].sort((a,b) => a.recordedAt.localeCompare(b.recordedAt)); const previous = snapshots.length > 1 ? snapshots[snapshots.length - 2].views : 0; const growth = previous ? ((account.views - previous) / previous) * 100 : 0; return <SortableItem id={account.id} key={account.id}>{accountHandle => <article className="overview-card">
               <div className="card-head"><button onClick={() => { setSelectedAccountId(account.id); setOperationView("profile"); }}><strong>{account.name}</strong><span>dia {time.absoluteDay}</span></button><div>{account.instagramUrl.trim() ? <a className="instagram-link" href={account.instagramUrl} target="_blank" rel="noreferrer" aria-label={`Abrir Instagram de ${account.name}`} title="Abrir Instagram">◎</a> : null}<button className="drag-handle" {...accountHandle.attributes} {...accountHandle.listeners} aria-label="Arrastar modelo">⠿</button><button onClick={() => setData((current) => ({ ...current, accounts: current.accounts.filter((item) => item.id !== account.id) }))} aria-label="Excluir">×</button></div></div>
               <dl><div><dt>Views</dt><dd>{compact.format(account.views)}</dd></div><div><dt>Reels</dt><dd>{account.posts}</dd></div><div><dt>Rotina</dt><dd>{done}/{routine.length}</dd></div><div><dt>Var.</dt><dd className={growth >= 0 ? "positive" : "negative"}>{growth ? `${growth > 0 ? "+" : ""}${growth.toFixed(1)}%` : "–"}</dd></div></dl>
-              <div className="card-progress"><span>rotina</span><i><b style={{ width: `${routine.length ? done / routine.length * 100 : 0}%` }}/></i></div><div className="card-progress"><span>material · {material.remaining}/{account.materialScope}d</span><i><b style={{ width: `${material.percent}%` }}/></i></div>
+              <div className="card-progress"><span>rotina</span><i><b style={{ width: `${routine.length ? done / routine.length * 100 : 0}%` }}/></i></div><div className="card-progress"><span>reels · {reelsMaterial.remaining}/{reelsMaterial.scope}d</span><i><b style={{ width: `${reelsMaterial.percent}%` }}/></i></div><div className="card-progress"><span>fotos · {photosMaterial.remaining}/{photosMaterial.scope}d</span><i><b style={{ width: `${photosMaterial.percent}%` }}/></i></div>
             </article>}</SortableItem>; })}</div></SortableContext></DndContext>
             <section className="general-routines"><div className="general-routines-head"><strong>Rotina de hoje</strong><span>{overviewAccounts.length} modelos</span></div><div className="today-routines">{overviewAccounts.map((account) => { const time = timeline(account); const items = accountRoutine(account); return <section key={account.id}><header><strong>{account.name}</strong><span>{time.periodType === "week" ? `Semana ${time.periodNumber}` : `Mês ${time.periodNumber}`} · dia {time.dayNumber}</span></header>{[...items].sort((a, b) => Number(account.completedRoutine.includes(a.id)) - Number(account.completedRoutine.includes(b.id))).map((item) => <label className={account.completedRoutine.includes(item.id) ? "checked" : ""} key={item.id}><input type="checkbox" checked={account.completedRoutine.includes(item.id)} onChange={() => { const completed = account.completedRoutine.includes(item.id) ? account.completedRoutine.filter((id) => id !== item.id) : [...account.completedRoutine,item.id]; updateAccount(account.id,{completedRoutine:completed,posts:item.trackPosts && !account.completedRoutine.includes(item.id) ? account.posts+1 : item.trackPosts && account.completedRoutine.includes(item.id) ? Math.max(0,account.posts-1):account.posts}); }}/><span className="check">✓</span><span><strong>{item.title}</strong><small>{item.description}</small></span></label>)}{!items.length ? <p>Sem etapas para hoje.</p> : null}</section>; })}</div></section>
           </> : null}
@@ -520,9 +528,9 @@ export default function Home() {
           </div> : <p className="empty-state large">Adicione ou selecione um perfil.</p> : null}
 
           {operationView === "material" ? <div className="material-view">
-            <div className="material-toolbar"><select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" || event.target.value === "unbatched" ? event.target.value : Number(event.target.value))}><option value="all">Todos os lotes</option><option value="unbatched">Sem lote</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select><button className="text-button" onClick={() => setMaterialSelection(materialSelection.length === filteredAccounts.length ? [] : filteredAccounts.map((item) => item.id))}>{materialSelection.length === filteredAccounts.length && filteredAccounts.length ? "limpar" : "selecionar todos"}</button></div>
-            <form className="material-bulk" onSubmit={applyMaterial}><strong>Aplicar em lote</strong><label>Dias<input type="number" min="0" value={materialDays} onChange={(event) => setMaterialDays(Math.max(0,Number(event.target.value)))}/></label><label>Escopo<input type="number" min="1" value={materialScope} onChange={(event) => setMaterialScope(Math.max(1,Number(event.target.value)))}/></label><button className="primary" disabled={!materialSelection.length}>Aplicar a {materialSelection.length}</button></form>
-            <div className="material-list">{filteredAccounts.map((account) => { const status = materialStatus(account); return <article className={materialSelection.includes(account.id) ? "selected" : ""} key={account.id}><input type="checkbox" checked={materialSelection.includes(account.id)} onChange={() => setMaterialSelection((current) => current.includes(account.id) ? current.filter((id) => id !== account.id) : [...current,account.id])}/><div><strong>{account.name}</strong><span>{account.batch == null ? "Sem lote" : `Lote ${account.batch}`}</span></div><label>Dias<input type="number" min="0" value={status.remaining} onChange={(event) => updateAccount(account.id,{materialDays:Number(event.target.value),materialUpdatedAt:new Date().toISOString()})}/></label><label>Escopo<input type="number" min="1" value={account.materialScope} onChange={(event) => updateAccount(account.id,{materialScope:Number(event.target.value)})}/></label><div className="material-bar"><span>{status.remaining}/{account.materialScope} dias</span><i><b style={{width:`${status.percent}%`}}/></i></div></article>; })}</div>
+            <div className="material-toolbar"><div className="material-tabs"><button className={materialKind === "reels" ? "active" : ""} onClick={() => setMaterialKind("reels")}>Reels</button><button className={materialKind === "photos" ? "active" : ""} onClick={() => setMaterialKind("photos")}>Fotos</button></div><select value={batchFilter} onChange={(event) => setBatchFilter(event.target.value === "all" || event.target.value === "unbatched" ? event.target.value : Number(event.target.value))}><option value="all">Todos os lotes</option><option value="unbatched">Sem lote</option>{batchNumbers.map((batch) => <option value={batch} key={batch}>Lote {batch}</option>)}</select><button className="text-button" onClick={() => setMaterialSelection(materialSelection.length === filteredAccounts.length ? [] : filteredAccounts.map((item) => item.id))}>{materialSelection.length === filteredAccounts.length && filteredAccounts.length ? "limpar" : "selecionar todos"}</button></div>
+            <form className="material-bulk" onSubmit={applyMaterial}><strong>Aplicar {materialKind === "reels" ? "Reels" : "Fotos"} em lote</strong><label>Dias<input type="number" min="0" value={materialDays} onChange={(event) => setMaterialDays(Math.max(0,Number(event.target.value)))}/></label><label>Escopo<input type="number" min="1" value={materialScope} onChange={(event) => setMaterialScope(Math.max(1,Number(event.target.value)))}/></label><button className="primary" disabled={!materialSelection.length}>Aplicar a {materialSelection.length}</button></form>
+            <div className="material-list">{filteredAccounts.map((account) => { const status = materialStatus(account, materialKind); const scope = materialKind === "photos" ? account.photoMaterialScope ?? 30 : account.materialScope; return <article className={materialSelection.includes(account.id) ? "selected" : ""} key={account.id}><input type="checkbox" checked={materialSelection.includes(account.id)} onChange={() => setMaterialSelection((current) => current.includes(account.id) ? current.filter((id) => id !== account.id) : [...current,account.id])}/><div><strong>{account.name}</strong><span>{account.batch == null ? "Sem lote" : `Lote ${account.batch}`}</span></div><label>Dias<input type="number" min="0" value={status.remaining} onChange={(event) => updateAccount(account.id, materialKind === "photos" ? {photoMaterialDays:Number(event.target.value),photoMaterialUpdatedAt:new Date().toISOString()} : {materialDays:Number(event.target.value),materialUpdatedAt:new Date().toISOString()})}/></label><label>Escopo<input type="number" min="1" value={scope} onChange={(event) => updateAccount(account.id, materialKind === "photos" ? {photoMaterialScope:Number(event.target.value)} : {materialScope:Number(event.target.value)})}/></label><div className="material-bar"><span>{status.remaining}/{scope} dias</span><i><b style={{width:`${status.percent}%`}}/></i></div></article>; })}</div>
           </div> : null}
 
           {operationView === "routine" ? <div className="routine-view">
