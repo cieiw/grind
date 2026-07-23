@@ -267,7 +267,9 @@ export default function Home() {
         setLoaded(true);
       })();
     });
-    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js").catch(() => undefined);
+    // Busca uma versão nova do worker em toda abertura para que um deploy não
+    // fique preso no cache do navegador.
+    if ("serviceWorker" in navigator) navigator.serviceWorker.register("/sw.js", { updateViaCache: "none" }).catch(() => undefined);
     return () => cancelAnimationFrame(frame);
   }, []);
 
@@ -328,6 +330,9 @@ export default function Home() {
   }, [data.accounts, batchFilter, sortMode]);
   const batchNumbers = [...new Set(data.accounts.map((item) => item.batch).filter((batch): batch is number => batch != null))].sort((a, b) => a - b);
   const overviewAccounts = overviewAccountIds.length ? filteredAccounts.filter((account) => overviewAccountIds.includes(account.id)) : filteredAccounts;
+  const routineTemplatesForSelection = data.routineTemplates
+    .filter((item) => item.periodType === routinePeriodType && item.periodNumber === routinePeriodNumber && (routineDayNumber === 0 ? item.dayNumber === 0 : item.dayNumber === 0 || item.dayNumber === routineDayNumber))
+    .sort((a, b) => a.dayNumber - b.dayNumber);
 
   function updateGroups(transform: (current: Group[]) => Group[]) {
     setData((current) => ({ ...current, tasks: { ...current.tasks, [selectedDate]: transform(current.tasks[selectedDate] ?? defaultGroups()) } }));
@@ -535,7 +540,7 @@ export default function Home() {
 
           {operationView === "routine" ? <div className="routine-view">
             <div className="routine-controls"><label>Período<select value={routinePeriodType} onChange={(event) => setRoutinePeriodType(event.target.value as PeriodType)}><option value="week">Semana</option><option value="month">Mês</option></select></label><label>{routinePeriodType === "week" ? "Semana" : "Mês"}<input type="number" min="1" value={routinePeriodNumber} onChange={(event) => setRoutinePeriodNumber(Math.max(1,Number(event.target.value)))}/></label><label>Dia<select value={routineDayNumber} onChange={(event) => setRoutineDayNumber(Number(event.target.value))}><option value="0">Todos os dias</option>{Array.from({length:routinePeriodType === "week" ? 7 : 31},(_,index) => index+1).map((day) => <option value={day} key={day}>Dia {day}</option>)}</select></label><button className="primary" onClick={() => setData((current) => ({...current,routineTemplates:[...current.routineTemplates,{id:uid(),periodType:routinePeriodType,periodNumber:routinePeriodNumber,dayNumber:routineDayNumber,title:"Nova etapa",description:"",trackPosts:false}]}))}>+ etapa</button></div>
-            <div className="routine-templates">{data.routineTemplates.filter((item) => item.periodType === routinePeriodType && item.periodNumber === routinePeriodNumber && item.dayNumber === routineDayNumber).map((item) => <article key={item.id}><input value={item.title} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,title:event.target.value}:row)}))}/><textarea value={item.description} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,description:event.target.value}:row)}))}/><label><input type="checkbox" checked={item.trackPosts} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,trackPosts:event.target.checked}:row)}))}/> soma reel</label><button onClick={() => setData((current) => ({...current,routineTemplates:current.routineTemplates.filter((row) => row.id !== item.id)}))}>×</button></article>)}</div>
+            <div className="routine-templates">{routineTemplatesForSelection.map((item) => <article className={item.dayNumber === 0 ? "applies-every-day" : ""} key={item.id}>{routineDayNumber !== 0 ? <small className="routine-scope">{item.dayNumber === 0 ? "todos os dias" : `dia ${item.dayNumber}`}</small> : null}<input value={item.title} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,title:event.target.value}:row)}))}/><textarea value={item.description} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,description:event.target.value}:row)}))}/><label><input type="checkbox" checked={item.trackPosts} onChange={(event) => setData((current) => ({...current,routineTemplates:current.routineTemplates.map((row) => row.id === item.id ? {...row,trackPosts:event.target.checked}:row)}))}/> soma reel</label><button onClick={() => setData((current) => ({...current,routineTemplates:current.routineTemplates.filter((row) => row.id !== item.id)}))}>×</button></article>)}</div>
           </div> : null}
         </section>
       </div>

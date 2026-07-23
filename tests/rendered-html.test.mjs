@@ -28,7 +28,8 @@ test("keeps the Grind shell, installable assets, and database sync connected", a
   assert.match(page, /signInWithPassword/);
   assert.doesNotMatch(page, /signUp/);
   assert.match(page, /function rolloverPendingTasks\(\)/);
-  assert.match(page, /navigator\.serviceWorker\.register\("\/sw\.js"\)/);
+  assert.match(page, /updateViaCache: "none"/);
+  assert.match(page, /routineTemplatesForSelection/);
   assert.match(layout, /title: "Grind"/);
   assert.match(css, /@media\(max-width:480px\)/);
   assert.match(css, /\.checked \.check\{/);
